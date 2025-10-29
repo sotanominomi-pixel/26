@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>N Clock — Full</title>
+
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#ffffff">
+
+<style>
+:root{
+  --bg-light:#ffffff;
+  --text-light:#000000;
+  --accent:#0a84ff;
+  --muted:#666;
+  --shadow:0 6px 18px rgba(10,10,10,0.08);
+}
+@media(prefers-color-scheme: dark){
+  :root{
+    --bg-light:#000;
+    --text-light:#fff;
+    --accent:#0a84ff;
+    --muted:#888;
+  }
+}
+html,body{
+  height:100%;
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+  background:var(--bg-light);
+  color:var(--text-light);
+}
+.wrap{
+  min-height:100vh;
+  box-sizing:border-box;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  padding:28px;
+  gap:18px;
+}
+.time-display{
+  font-weight:600;
+  font-size: calc(36px + 12vw);
+  line-height:1;
+  letter-spacing:2px;
+}
+.tabs{
+  display:flex;
+  gap:8px;
+  background: rgba(0,0,0,0.04);
+  padding:6px;
+  border-radius:14px;
+  box-shadow:var(--shadow);
+}
+.tabs button{
+  background:transparent;
+  border:none;
+  padding:12px 22px;
+  border-radius:10px;
+  font-weight:600;
+  cursor:pointer;
+  color:var(--text-light);
+  transition: all .15s;
+}
+.tabs button.active{
+  background:var(--text-light);
+  color:var(--bg-light);
+  box-shadow:0 6px 18px rgba(10,10,10,0.08);
+}
+.controls{
+  display:flex;
+  gap:16px;
+  align-items:center;
+  justify-content:center;
+  margin-top:6px;
+}
+.btn-circle{
+  width:88px;height:88px;border-radius:50%;
+  display:inline-grid;place-items:center;
+  font-weight:700;font-size:16px;color:white;border:none;
+  box-shadow:0 10px 30px rgba(10,10,10,0.08);
+  cursor:pointer;
+}
+.btn-start{background:#34c759;}
+.btn-stop{background:#ff3b30;}
+.btn-lap{background:#f2f2f2;color:var(--text-light);border:1px solid #ddd;width:64px;height:64px;font-size:14px;border-radius:12px;}
+.btn-reset{background:#e6e6e6;color:var(--text-light);border:1px solid #ddd;width:64px;height:64px;font-size:14px;border-radius:12px;}
+
+.laps{
+  width:min(760px,96%);
+  max-height:220px;
+  overflow:auto;
+  margin-top:12px;
+  border-top:1px solid rgba(0,0,0,0.06);
+  padding-top:10px;
+}
+.lap-item{
+  display:flex;justify-content:space-between;
+  padding:8px 6px;font-size:15px;color:var(--muted);
+}
+.footer{font-size:13px;color:var(--muted);margin-top:8px;}
+.alarm-item{display:flex;justify-content:space-between;padding:6px;font-size:18px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="display" class="time-display">00:00:00</div>
+
+  <!-- Tabs -->
+  <div class="tabs" role="tablist" aria-label="mode">
+    <button id="tabClock" class="active">時計</button>
+    <button id="tabStopwatch">ストップウォッチ</button>
+    <button id="tabAlarm">アラーム</button>
+  </div>
+
+  <!-- Stopwatch controls -->
+  <div id="stopwatchArea" style="display:none; margin-top:12px; text-align:center;">
+    <div class="controls">
+      <button id="startBtn" class="btn-circle btn-start">Start</button>
+      <button id="lapBtn" class="btn-lap" disabled>Lap</button>
+      <button id="resetBtn" class="btn-reset" disabled>Reset</button>
+    </div>
+    <div class="laps" id="laps"></div>
+  </div>
+
+  <!-- Alarm mode -->
+  <div id="alarmsDiv" style="display:none; margin-top:12px; text-align:center;">
+    <button id="addAlarmBtn" style="padding:6px 12px; margin-bottom:12px;">アラーム追加</button>
+    <div id="alarmsList"></div>
+  </div>
+
+  <div class="footer">設定は自動で保存されます。</div>
+</div>
+
+<script>
+/* --- State --- */
+const display = document.getElementById('display');
+const tabClock = document.getElementById('tabClock');
+const tabStopwatch = document.getElementById('tabStopwatch');
+const tabAlarm = document.getElementById('tabAlarm');
+const stopwatchArea = document.getElementById('stopwatchArea');
+const startBtn = document.getElementById('startBtn');
+const lapBtn = document.getElementById('lapBtn');
+const resetBtn = document.getElementById('resetBtn');
+const lapsDiv = document.getElementById('laps');
+
+const alarmsDiv = document.getElementById('alarmsDiv');
+const alarmsList = document.getElementById('alarmsList');
+const addAlarmBtn = document.getElementById('addAlarmBtn');
+
+let mode = localStorage.getItem('nclock_mode') || 'clock';
+let running=false, elapsedMs=Number(localStorage.getItem('nclock_sw_elapsed')||0), lastPerf=null;
+let laps = JSON.parse(localStorage.getItem('nclock_sw_laps')||'[]');
+let alarms = JSON.parse(localStorage.getItem('nclock_alarms')||'[]');
+
+function saveSettings(){
+  localStorage.setItem('nclock_mode',mode);
+  localStorage.setItem('nclock_sw_elapsed',String(elapsedMs));
+  localStorage.setItem('nclock_sw_laps',JSON.stringify(laps));
+  localStorage.setItem('nclock_alarms',JSON.stringify(alarms));
+}
+
+/* --- Render Laps --- */
+function renderLaps(){
+  if(laps.length===0){lapsDiv.innerHTML='<div style="color:var(--muted); padding:8px;">ラップなし</div>';return;}
+  lapsDiv.innerHTML = laps.map((t,i)=>`<div class="lap-item"><div>Lap ${laps.length-i}</div><div>${t}</div></div>`).join('');
+}
+
+/* --- Render Alarms --- */
+function renderAlarms(){
+  if(alarms.length===0){alarmsList.innerHTML='<div style="color:var(--muted); padding:8px;">アラームなし</div>';return;}
+  alarmsList.innerHTML = alarms.map((a,i)=>{
+    const checked = a.enabled?'checked':'';
+    return `<div class="alarm-item">
+      <div>${String(a.h).padStart(2,'0')}:${String(a.m).padStart(2,'0')}</div>
+      <div>
+        <input type="checkbox" data-index="${i}" class="alarm-toggle" ${checked}>
+        <button data-index="${i}" class="alarm-delete">×</button>
+      </div>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('.alarm-toggle').forEach(el=>{
+    el.addEventListener('change', e=>{
+      alarms[e.target.dataset.index].enabled=e.target.checked;
+      saveSettings();
+    });
+  });
+  document.querySelectorAll('.alarm-delete').forEach(el=>{
+    el.addEventListener('click', e=>{
+      alarms.splice(e.target.dataset.index,1);
+      renderAlarms(); saveSettings();
+    });
+  });
+}
+
+/* --- Tabs --- */
+function updateTabs(){
+  stopwatchArea.style.display = (mode==='stopwatch')?'block':'none';
+  alarmsDiv.style.display = (mode==='alarm')?'block':'none';
+  display.style.display = (mode==='clock' || mode==='stopwatch')?'block':'none';
+  [tabClock,tabStopwatch,tabAlarm].forEach(t=>t.classList.remove('active'));
+  if(mode==='clock') tabClock.classList.add('active');
+  else if(mode==='stopwatch') tabStopwatch.classList.add('active');
+  else if(mode==='alarm') tabAlarm.classList.add('active');
+  renderAlarms();
+}
+tabClock.addEventListener('click',()=>{mode='clock';updateTabs(); saveSettings();});
+tabStopwatch.addEventListener('click',()=>{mode='stopwatch';updateTabs(); saveSettings();});
+tabAlarm.addEventListener('click',()=>{mode='alarm';
